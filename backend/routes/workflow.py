@@ -4,7 +4,7 @@ Triggers Temporal workflow executions and checks their status.
 """
 
 from flask import Blueprint, jsonify, request
-from services.temporal_client import trigger_workflow, get_workflow_status
+from services.temporal_client import trigger_workflow, get_workflow_status, get_workflow_events
 
 workflow_bp = Blueprint("workflow", __name__)
 
@@ -44,6 +44,16 @@ def status(workflow_id: str):
     """Get the status of a running workflow."""
     try:
         result = get_workflow_status(workflow_id)
+        return jsonify(result)
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@workflow_bp.route("/api/workflow-events/<workflow_id>", methods=["GET"])
+def workflow_events(workflow_id: str):
+    """Fetch workflow history events for replay visualization."""
+    try:
+        result = get_workflow_events(workflow_id)
         return jsonify(result)
     except Exception as e:
         return jsonify({"error": str(e)}), 500

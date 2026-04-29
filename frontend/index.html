@@ -8,7 +8,7 @@
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
-    <link rel="stylesheet" href="styles.css">
+    <link rel="stylesheet" href="styles.css?v=2">
 </head>
 <body>
     <div id="app">
@@ -93,10 +93,40 @@
 
             <!-- Visualize View -->
             <div id="view-visualize" class="view">
-                <div class="view-header">
-                    <h1 id="viz-title">Workflow Visualization</h1>
-                    <p class="view-subtitle" id="viz-subtitle">Select or analyze a workflow to visualize its flow</p>
+                <div class="view-header viz-header-row">
+                    <div>
+                        <h1 id="viz-title">Workflow Visualization</h1>
+                        <p class="view-subtitle" id="viz-subtitle">Select or analyze a workflow to visualize its flow</p>
+                    </div>
+                    <button id="btn-replay" class="btn-replay" title="Replay a workflow run with live data">
+                        <svg viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM9.555 7.168A1 1 0 008 8v4a1 1 0 001.555.832l3-2a1 1 0 000-1.664l-3-2z" clip-rule="evenodd"/></svg>
+                        Play Run
+                    </button>
                 </div>
+
+                <!-- Replay Controls Bar -->
+                <div id="replay-controls" class="replay-controls hidden">
+                    <div class="replay-id-group">
+                        <label>Workflow ID</label>
+                        <input id="replay-workflow-id" type="text" placeholder="e.g. asset-lookup-418336bd-14eb-4864-b743-36e3d32631c3" autocomplete="off">
+                    </div>
+                    <div class="replay-speed-group">
+                        <label>Speed</label>
+                        <select id="replay-speed">
+                            <option value="2500">Slow</option>
+                            <option value="1400" selected>Normal</option>
+                            <option value="700">Fast</option>
+                        </select>
+                    </div>
+                    <button id="btn-play-replay" class="btn-primary btn-green" style="padding:8px 18px;font-size:13px">
+                        <svg viewBox="0 0 20 20" fill="currentColor" class="btn-icon"><path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM9.555 7.168A1 1 0 008 8v4a1 1 0 001.555.832l3-2a1 1 0 000-1.664l-3-2z" clip-rule="evenodd"/></svg>
+                        Play
+                    </button>
+                    <button id="btn-stop-replay" class="btn-secondary hidden" style="padding:8px 18px;font-size:13px">Stop</button>
+                    <button id="btn-reset-replay" class="btn-secondary hidden" style="padding:8px 18px;font-size:13px">Reset</button>
+                    <span id="replay-status-text" class="replay-status-text"></span>
+                </div>
+
                 <div id="workflow-canvas" class="workflow-canvas">
                     <div class="empty-state">
                         <svg viewBox="0 0 64 64" fill="none" class="empty-icon">
@@ -221,6 +251,6 @@
         </div>
     </div>
 
-    <script src="app.js"></script>
+    <script src="app.js?v=2"></script>
 </body>
 </html>

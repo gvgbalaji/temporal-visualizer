@@ -223,7 +223,10 @@ function buildActivityNode(step) {
   let meta = '';
   if (step.timeout) meta += `⏱ ${step.timeout}`;
   if (step.retryPolicy) meta += ` · ↻ ${step.retryPolicy.maxAttempts || '?'} retries`;
-  return `<div class="flow-node flow-node-activity">
+  return `<div class="flow-node flow-node-activity"
+    data-step-id="${esc(step.id || '')}"
+    data-activity-name="${esc(step.name || '')}"
+    data-registered-name="${esc(step.registeredName || '')}">
     <div class="node-type-badge badge-activity">Activity</div>
     <div class="node-name">${esc(step.name)}</div>
     <div class="node-desc">${esc(step.description || '')}</div>
@@ -584,6 +587,220 @@ async function pollWorkflowStatus(workflowId) {
       break;
     }
   }
+}
+
+// ============================================================
+// REPLAY / PLAY RUN
+// ============================================================
+const replayState = {
+  playing: false,
+  stopRequested: false,
+};
+
+document.getElementById('btn-replay').addEventListener('click', () => {
+  const controls = document.getElementById('replay-controls');
+  const isHidden = controls.classList.contains('hidden');
+  controls.classList.toggle('hidden');
+  document.getElementById('btn-replay').classList.toggle('active', isHidden);
+});
+
+document.getElementById('btn-play-replay').addEventListener('click', startReplay);
+document.getElementById('btn-stop-replay').addEventListener('click', () => {
+  replayState.stopRequested = true;
+});
+document.getElementById('btn-reset-replay').addEventListener('click', () => {
+  resetNodeStates();
+  document.getElementById('replay-status-text').textContent = '';
+  document.getElementById('btn-reset-replay').classList.add('hidden');
+});
+
+async function startReplay() {
+  const workflowId = document.getElementById('replay-workflow-id').value.trim();
+  if (!workflowId) {
+    showToast('Enter a workflow ID to replay', 'error');
+    return;
+  }
+  if (!state.currentWorkflow) {
+    showToast('Analyze or load a workflow first so the visualizer has blocks to animate', 'error');
+    return;
+  }
+
+  resetNodeStates();
+  replayState.playing = true;
+  replayState.stopRequested = false;
+
+  document.getElementById('btn-play-replay').classList.add('hidden');
+  document.getElementById('btn-stop-replay').classList.remove('hidden');
+  document.getElementById('btn-reset-replay').classList.add('hidden');
+  document.getElementById('replay-status-text').textContent = 'Fetching events…';
+
+  try {
+    const data = await apiGet(`/api/workflow-events/${encodeURIComponent(workflowId)}`);
+    const speedMs = parseInt(document.getElementById('replay-speed').value) || 1400;
+    await animateReplay(data.events || [], speedMs);
+  } catch (err) {
+    showToast(`Replay failed: ${err.message}`, 'error');
+    document.getElementById('replay-status-text').textContent = `Error: ${err.message}`;
+  } finally {
+    replayState.playing = false;
+    document.getElementById('btn-play-replay').classList.remove('hidden');
+    document.getElementById('btn-stop-replay').classList.add('hidden');
+    document.getElementById('btn-reset-replay').classList.remove('hidden');
+  }
+}
+
+function resetNodeStates() {
+  document.querySelectorAll('#workflow-canvas .flow-node').forEach(node => {
+    node.classList.remove('node-active', 'node-running', 'node-completed', 'node-failed');
+    node.querySelector('.node-replay-data')?.remove();
+  });
+}
+
+async function animateReplay(events, speedMs) {
+  // Index events by type
+  const scheduledMap = {};   // eventId → event
+  const completedMap = {};   // scheduledEventId → event
+  const failedMap = {};      // scheduledEventId → event
+  let startEvent = null;
+  let endEvent = null;
+
+  for (const ev of events) {
+    if (ev.type === 'WorkflowExecutionStarted') startEvent = ev;
+    else if (ev.type === 'ActivityTaskScheduled') scheduledMap[ev.eventId] = ev;
+    else if (ev.type === 'ActivityTaskCompleted') completedMap[ev.scheduledEventId] = ev;
+    else if (ev.type === 'ActivityTaskFailed') failedMap[ev.scheduledEventId] = ev;
+    else if (ev.type === 'WorkflowExecutionCompleted' || ev.type === 'WorkflowExecutionFailed') endEvent = ev;
+  }
+
+  const scheduledList = Object.values(scheduledMap).sort((a, b) => a.eventId - b.eventId);
+
+  // Animate: Start node
+  const startNode = document.querySelector('#workflow-canvas .flow-node-start');
+  if (startEvent && startNode) {
+    setReplayStatus('Workflow started');
+    setNodeState(startNode, 'node-active');
+    showNodeData(startNode, null, startEvent.input, null);
+    await sleep(speedMs * 0.4);
+    if (replayState.stopRequested) return finishEarly();
+    setNodeState(startNode, 'node-completed');
+  }
+
+  // Animate: each activity in order
+  for (const schedEv of scheduledList) {
+    if (replayState.stopRequested) return finishEarly();
+
+    const name = schedEv.activityName;
+    const node = findActivityNode(name);
+    const completedEv = completedMap[schedEv.eventId];
+    const failedEv = failedMap[schedEv.eventId];
+
+    setReplayStatus(`Running: ${name}`);
+
+    if (node) {
+      node.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      setNodeState(node, 'node-running');
+      showNodeData(node, 'running', schedEv.input, null);
+      await sleep(speedMs * 0.5);
+      if (replayState.stopRequested) { setNodeState(node, null); return finishEarly(); }
+    } else {
+      await sleep(speedMs * 0.2);
+    }
+
+    if (node) {
+      if (completedEv) {
+        setNodeState(node, 'node-active');
+        showNodeData(node, 'completed', schedEv.input, completedEv.output);
+        await sleep(speedMs * 0.6);
+        if (replayState.stopRequested) return finishEarly();
+        setNodeState(node, 'node-completed');
+      } else if (failedEv) {
+        setNodeState(node, 'node-failed');
+        showNodeData(node, 'failed', schedEv.input, null, failedEv.error);
+        await sleep(speedMs * 0.6);
+      } else {
+        // Activity scheduled but no result yet (workflow still running)
+        setNodeState(node, 'node-active');
+        showNodeData(node, 'running', schedEv.input, null);
+        await sleep(speedMs * 0.4);
+      }
+    }
+  }
+
+  // Animate: End node
+  const endNode = document.querySelector('#workflow-canvas .flow-node-end');
+  if (endEvent && endNode) {
+    if (replayState.stopRequested) return finishEarly();
+    const ok = endEvent.type === 'WorkflowExecutionCompleted';
+    setReplayStatus(ok ? 'Workflow completed!' : 'Workflow failed');
+    setNodeState(endNode, ok ? 'node-active' : 'node-failed');
+    showNodeData(endNode, ok ? 'completed' : 'failed', null, endEvent.output, endEvent.error);
+    await sleep(speedMs * 0.4);
+    setNodeState(endNode, ok ? 'node-completed' : 'node-failed');
+  }
+
+  setReplayStatus('Replay complete');
+}
+
+function finishEarly() {
+  setReplayStatus('Stopped');
+}
+
+function setReplayStatus(msg) {
+  const el = document.getElementById('replay-status-text');
+  if (el) el.textContent = msg;
+}
+
+function setNodeState(node, cls) {
+  node.classList.remove('node-active', 'node-running', 'node-completed', 'node-failed');
+  if (cls) node.classList.add(cls);
+}
+
+function findActivityNode(name) {
+  if (!name) return null;
+  for (const node of document.querySelectorAll('#workflow-canvas [data-registered-name], #workflow-canvas [data-activity-name]')) {
+    if (node.dataset.registeredName === name || node.dataset.activityName === name) return node;
+  }
+  return null;
+}
+
+function showNodeData(node, status, input, output, error) {
+  node.querySelector('.node-replay-data')?.remove();
+
+  let html = '<div class="node-replay-data">';
+
+  if (status) {
+    const cls = status === 'completed' ? 'replay-status-ok' : status === 'failed' ? 'replay-status-err' : 'replay-status-running';
+    const label = status === 'completed' ? '✓ Completed' : status === 'failed' ? '✗ Failed' : '⟳ Running';
+    html += `<div class="replay-status-badge ${cls}">${label}</div>`;
+  }
+
+  if (input !== null && input !== undefined) {
+    html += `<div class="replay-data-section">
+      <div class="replay-data-label">Input</div>
+      <pre class="replay-data-json">${esc(JSON.stringify(input, null, 2))}</pre>
+    </div>`;
+  }
+
+  if (output !== null && output !== undefined) {
+    html += `<div class="replay-data-section">
+      <div class="replay-data-label">Output</div>
+      <pre class="replay-data-json">${esc(JSON.stringify(output, null, 2))}</pre>
+    </div>`;
+  }
+
+  if (error) {
+    html += `<div class="replay-data-section">
+      <div class="replay-data-label" style="color:var(--accent-rose)">Error</div>
+      <pre class="replay-data-json" style="color:var(--accent-rose)">${esc(String(error))}</pre>
+    </div>`;
+  }
+
+  html += '</div>';
+  node.insertAdjacentHTML('beforeend', html);
+}
+
+function sleep(ms) {
+  return new Promise(resolve => setTimeout(resolve, ms));
 }
 
 // ============================================================
